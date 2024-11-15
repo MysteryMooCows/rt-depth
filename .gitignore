@@ -1,0 +1,12 @@
+# VSCode
+.vscode/
+
+# Python
+__pycache__/
+
+# depth_pro module
+depth_pro/
+checkpoints/
+
+# data
+images/
