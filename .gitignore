@@ -5,7 +5,7 @@
 __pycache__/
 
 # depth_pro module
-depth_pro/
+depth_pro/__pycache__/
 checkpoints/
 
 # data
