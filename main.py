@@ -1,4 +1,4 @@
-from rich import print
+from rich import print as rprint
 
 import PIL
 from PIL import Image
@@ -8,30 +8,35 @@ import torch
 import cv2
 import matplotlib.pyplot as plt
 
+from utils.console_io import ProgressIndicator
+
 
 DEBUG = False
 
 
 def dprint(msg):
     if DEBUG:
-        print(msg)
+        rprint(msg)
 
 
 def main():
-    print("Initializing...")
-
     dprint("\ninvoked main()...\n")
     dprint(f"CUDA available: {torch.cuda.is_available()}")
 
-    model, transform = depth_pro.create_model_and_transforms(device=torch.device("cuda"),
-                                                             precision=torch.float16)
-    model.eval()
+    rprint("Initializing", end="")
 
-    dprint("Getting capture device...")
-    cap = cv2.VideoCapture(0)
+    with ProgressIndicator() as _:
+        model, transform = depth_pro.create_model_and_transforms(device=torch.device("cuda"),
+                                                             precision=torch.float16)
+        model.eval()
+
+        dprint("Getting capture device...")
+        cap = cv2.VideoCapture(0)
+
+    rprint("[green]done[/green]")
 
     if not cap.isOpened():
-        print("[red][bold]Error: Could not open capture device[/bold][/red]")
+        rprint("[red][bold]Error: Could not open capture device[/bold][/red]")
         exit(1)
 
     try:
@@ -39,7 +44,7 @@ def main():
             ret, frame = cap.read()
             
             if not ret:
-                print("[red][bold]Error: Can't receive frame (stream end?). Exiting...[/bold][/red]")
+                rprint("[red][bold]Error: Can't receive frame (stream end?). Exiting...[/bold][/red]")
                 break
 
             image = transform(frame)
