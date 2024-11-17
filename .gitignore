@@ -9,4 +9,5 @@ depth_pro/__pycache__/
 checkpoints/
 
 # data
-images/
+images/*
+!images/cat.webp
