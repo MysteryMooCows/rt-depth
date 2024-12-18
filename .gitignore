@@ -11,3 +11,4 @@ checkpoints/
 # data
 images/*
 !images/cat.webp
+output/

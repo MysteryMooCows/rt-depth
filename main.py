@@ -95,6 +95,12 @@ def main():
 
         plt.imshow(depth)
         plt.colorbar()
+
+        if not os.path.exists("output"):
+            os.makedirs("output")
+
+        plt.imsave(os.path.join("output", "depth.png"), depth)
+
         plt.show()
 
 
