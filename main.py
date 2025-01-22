@@ -14,13 +14,15 @@ from utils.console_io import ProgressIndicator
 
 import matplotlib.pyplot as plt
 
+from dotenv import load_dotenv
+import os
 
-DEBUG = False
-RT = True
-RT_SCALE = 1/4
+load_dotenv()
 
-IMG_PATH = os.path.join("images", "cat.webp")
-
+DEBUG = os.getenv('DEBUG').lower() == 'true'
+RT = os.getenv('RT').lower() == 'true'
+RT_SCALE = float(os.getenv('RT_SCALE'))
+IMG_PATH = os.path.join(os.getenv('IMAGES_BASE_PATH'), os.getenv('TEST_IMAGE'))
 
 def dprint(msg):
     if DEBUG:

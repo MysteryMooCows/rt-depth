@@ -12,3 +12,6 @@ checkpoints/
 images/*
 !images/cat.webp
 output/
+
+# environment
+.env
