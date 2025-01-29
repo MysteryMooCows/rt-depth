@@ -1,8 +1,20 @@
+import os
 import sys
 from threading import Thread
 import time
 from typing import Optional
 
+from rich import print as rprint
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DEBUG = os.getenv('DEBUG').lower() == 'true'
+
+def dprint(msg):
+    if DEBUG:
+        rprint(msg)
 
 class ProgressIndicator:
     def __init__(self):

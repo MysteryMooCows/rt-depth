@@ -10,7 +10,8 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 
-from utils.console_io import ProgressIndicator
+from drone import Drone
+from utils.console_io import dprint, ProgressIndicator
 
 import matplotlib.pyplot as plt
 
@@ -20,13 +21,10 @@ import os
 load_dotenv()
 
 DEBUG = os.getenv('DEBUG').lower() == 'true'
-RT = os.getenv('RT').lower() == 'true'
+RT = os.getenv('RT').lower()
 RT_SCALE = float(os.getenv('RT_SCALE'))
 IMG_PATH = os.path.join(os.getenv('IMAGES_BASE_PATH'), os.getenv('TEST_IMAGE'))
 
-def dprint(msg):
-    if DEBUG:
-        rprint(msg)
 
 def main():
     dprint("\ninvoked main()...\n")
@@ -41,7 +39,7 @@ def main():
 
     rprint("[green]done[/green]")
 
-    if RT:
+    if RT == 'webcam':
         dprint("Getting capture device...")
         cap = cv2.VideoCapture(0)
 
@@ -77,6 +75,10 @@ def main():
         finally:
             cap.release()
             cv2.destroyAllWindows()
+
+    elif RT == 'drone':
+        drone = Drone(model, transform)
+        drone.run()
 
     else:
         image, _, f_px = depth_pro.load_rgb(IMG_PATH)
