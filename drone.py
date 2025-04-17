@@ -9,6 +9,7 @@ from rich import print as rprint
 
 from utils.async_frame_predictor import AsyncPredictor
 from utils.async_frame_reader import AsyncFrameReader
+from utils.console_io import dprint
 
 load_dotenv()
 
@@ -43,6 +44,21 @@ class Drone:
         self.send_rc_control = False
         self.should_stop = False
         
+        # Autonomous navigation state
+        self.autonomous_mode = False
+        self.forward_start_time = None
+        self.altitude_adjust_start = None
+        self.altitude_adjusting = False
+        
+        # Yaw control parameters
+        self.yaw_start_time = None
+        self.yaw_duration = None
+        self.yaw_target_angle = None
+        
+        # Battery tracking
+        self.battery_level = 0
+        self.last_battery_check = 0
+        
         # Model components
         self.model = model
         self.transform = transform
@@ -52,6 +68,16 @@ class Drone:
     def run(self):
         self.tello.connect()
         self.tello.set_speed(self.speed)
+        
+        # Get initial battery level
+        try:
+            self.battery_level = self.tello.get_battery()
+            self.last_battery_check = time.time()
+            rprint(f"[green]Battery level: {self.battery_level}%[/green]")
+        except Exception as e:
+            rprint(f"[red]Could not get initial battery level: {e}[/red]")
+            self.battery_level = 0
+            self.last_battery_check = time.time()
 
         # Initialize and start async components
         self.frame_reader = AsyncFrameReader(self.tello)
@@ -123,14 +149,147 @@ class Drone:
             # Place depth map in right half at same position as frame
             combined[y_offset:y_offset+new_height, 
                     half_width+x_offset:half_width+x_offset+new_width] = depth_vis
+            
+            # If autonomous mode is active, show the target point
+            if self.autonomous_mode and self.last_valid_depth is not None:
+                # Find furthest point - HIGHEST depth value
+                furthest_idx = np.argmax(self.last_valid_depth)
+                furthest_y, furthest_x = np.unravel_index(furthest_idx, self.last_valid_depth.shape)
+                
+                # Find closest point (for reference)
+                closest_idx = np.argmin(self.last_valid_depth)
+                closest_y, closest_x = np.unravel_index(closest_idx, self.last_valid_depth.shape)
+                
+                # Scale coordinates to match display size
+                furthest_disp_x = int(furthest_x * new_width / self.last_valid_depth.shape[1])
+                furthest_disp_y = int(furthest_y * new_height / self.last_valid_depth.shape[0])
+                
+                closest_disp_x = int(closest_x * new_width / self.last_valid_depth.shape[1])
+                closest_disp_y = int(closest_y * new_height / self.last_valid_depth.shape[0])
+                
+                # Draw target furthest point crosshairs (green)
+                cv2.drawMarker(combined, 
+                            (x_offset + furthest_disp_x, y_offset + furthest_disp_y),
+                            (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
+                
+                cv2.drawMarker(combined, 
+                            (half_width + x_offset + furthest_disp_x, y_offset + furthest_disp_y),
+                            (0, 255, 0), cv2.MARKER_CROSS, 20, 2)
+                
+                # Draw closest point reference (red)
+                cv2.drawMarker(combined, 
+                            (x_offset + closest_disp_x, y_offset + closest_disp_y),
+                            (0, 0, 255), cv2.MARKER_DIAMOND, 10, 1)
+                
+                cv2.drawMarker(combined, 
+                            (half_width + x_offset + closest_disp_x, y_offset + closest_disp_y),
+                            (0, 0, 255), cv2.MARKER_DIAMOND, 10, 1)
         
-        # Add static overlay for instructions
-        overlay = combined.copy()
-        # Larger, more opaque background for better readability
-        # cv2.rectangle(overlay, (5, 5), (205, 195), (0, 0, 0), -1)
-        # cv2.addWeighted(overlay, 0.4, combined, 0.6, 0, combined)
+        # Add status information (mode and battery)
+        # Update battery periodically to avoid too many requests
+        current_time = time.time()
+        if not hasattr(self, 'last_battery_check') or current_time - self.last_battery_check > 10:
+            try:
+                self.battery_level = self.tello.get_battery()
+                self.last_battery_check = current_time
+            except:
+                if not hasattr(self, 'battery_level'):
+                    self.battery_level = 0
+                    self.last_battery_check = current_time
         
-        # Add control instructions with consistent positioning
+        # Battery status with colored indicator
+        if self.battery_level > 50:
+            bat_color = (0, 255, 0)  # Green for good battery
+        elif self.battery_level > 20:
+            bat_color = (0, 165, 255)  # Orange for medium battery
+        else:
+            bat_color = (0, 0, 255)  # Red for low battery
+            
+            # Make it flash if very low
+            if self.battery_level < 10 and int(current_time) % 2 == 0:
+                bat_color = (0, 0, 0)
+        
+        # Draw battery indicator
+        battery_width = 120
+        battery_height = 25
+        battery_x = self.display_width - battery_width - 20
+        battery_y = 50
+        
+        # Battery outline
+        cv2.rectangle(combined, (battery_x, battery_y), 
+                    (battery_x + battery_width, battery_y + battery_height), 
+                    (255, 255, 255), 2)
+        
+        # Battery fill based on percentage
+        fill_width = int((battery_width - 4) * (self.battery_level / 100))
+        cv2.rectangle(combined, 
+                    (battery_x + 2, battery_y + 2), 
+                    (battery_x + 2 + fill_width, battery_y + battery_height - 2), 
+                    bat_color, -1)
+        
+        # Battery percentage text
+        cv2.putText(combined, f"{self.battery_level}%", 
+                (battery_x + battery_width + 10, battery_y + battery_height - 5), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
+        
+        # Add autonomous mode status
+        if self.autonomous_mode:
+            status = "AUTO MODE: ON"
+            color = (0, 255, 0)  # Green
+        else:
+            status = "AUTO MODE: OFF"
+            color = (255, 255, 255)  # White
+            
+        cv2.putText(combined, status, (self.display_width - 200, 25), 
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2, cv2.LINE_AA)
+        
+        # Add yaw status if in autonomous mode
+        if self.autonomous_mode:
+            # Position below the battery display
+            yaw_status_y = 90
+            
+            if hasattr(self, 'yaw_start_time') and self.yaw_start_time is not None:
+                elapsed = time.time() - self.yaw_start_time
+                progress = min(elapsed / self.yaw_duration, 1.0) * 100 if self.yaw_duration else 0
+                yaw_text = f"YAW: {progress:.0f}% ({self.yaw_target_angle:.1f}°)"
+                yaw_color = (0, 165, 255)  # Orange during yaw
+            else:
+                # Check current yaw error
+                if self.last_valid_depth is not None:
+                    furthest_idx = np.argmax(self.last_valid_depth)
+                    furthest_y, furthest_x = np.unravel_index(furthest_idx, self.last_valid_depth.shape)
+                    
+                    # Get image center and dimensions
+                    h, w = self.last_valid_depth.shape
+                    center_y, center_x = h // 2, w // 2
+                    
+                    # Calculate x offset from center
+                    x_offset = furthest_x - center_x
+                    
+                    # Get focal length from predictor
+                    focal_length = self.predictor.get_focal_length()
+                    if focal_length is None:
+                        focal_length = 700
+                        
+                    # Calculate yaw angle
+                    yaw_angle = np.arctan2(x_offset, focal_length) * (180 / np.pi)
+                    yaw_aligned = abs(yaw_angle) < 10
+                    
+                    if yaw_aligned:
+                        yaw_text = "YAW: Aligned"
+                        yaw_color = (0, 255, 0)  # Green when aligned
+                    else:
+                        yaw_text = f"YAW: {yaw_angle:.1f}° needed"
+                        yaw_color = (0, 0, 255)  # Red when not aligned
+                else:
+                    yaw_text = "YAW: No data"
+                    yaw_color = (255, 255, 255)  # White when no data
+                    
+            cv2.putText(combined, yaw_text, 
+                    (self.display_width - 200, yaw_status_y), 
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, yaw_color, 1, cv2.LINE_AA)
+        
+        # Add control instructions
         instructions = [
             "Controls:",
             "W/S: Forward/Backward",
@@ -139,6 +298,7 @@ class Drone:
             "R/F: Up/Down",
             "T: Takeoff",
             "L: Land",
+            "M: Toggle Autonomous Mode",
             "ESC: Quit"
         ]
         
@@ -183,6 +343,154 @@ class Drone:
             elif k == ord('e'):
                 self.yaw_velocity = DRONE_SPEED
 
+    def _autonomous_navigation(self, depth):
+        """
+        Autonomous navigation based on depth data:
+        - Finds furthest pixel in depth map
+        - Yaws drone to face that direction
+        - Moves forward unless obstacle within 1m
+        - Adjusts altitude based on target height
+        """
+        if depth is None or not self.send_rc_control:
+            return
+        
+        # Find coordinates of furthest point (HIGHEST depth value)
+        furthest_idx = np.argmax(depth)
+        furthest_y, furthest_x = np.unravel_index(furthest_idx, depth.shape)
+        furthest_dist = depth[furthest_y, furthest_x]
+        
+        # Find the closest pixel (for obstacle avoidance)
+        closest_idx = np.argmin(depth)
+        closest_y, closest_x = np.unravel_index(closest_idx, depth.shape)
+        closest_dist = depth[closest_y, closest_x]
+        
+        # Get image center and dimensions
+        h, w = depth.shape
+        center_y, center_x = h // 2, w // 2
+        
+        # Calculate x and y offsets from center
+        x_offset = furthest_x - center_x
+        y_offset = furthest_y - center_y
+        
+        # Get focal length from predictor
+        focal_length = self.predictor.get_focal_length()
+        if focal_length is None:
+            focal_length = 700  # Default focal length estimate if not available
+        
+        # Calculate yaw angle (horizontal)
+        yaw_angle = np.arctan2(x_offset, focal_length) * (180 / np.pi)
+        
+        # Calculate pitch angle (vertical) 
+        pitch_angle = np.arctan2(y_offset, focal_length) * (180 / np.pi)
+        
+        # Consider aligned if within threshold
+        yaw_aligned = abs(yaw_angle) < 15  # Slightly more forgiving threshold
+        
+        # Determine the current state
+        currently_yawing = hasattr(self, 'yaw_start_time') and self.yaw_start_time is not None
+        currently_adjusting_altitude = hasattr(self, 'altitude_adjust_start') and self.altitude_adjust_start is not None
+        currently_moving_forward = hasattr(self, 'forward_start_time') and self.forward_start_time is not None
+        
+        # ====================== YAW CONTROL ======================
+        # Check if we should STOP yawing
+        if currently_yawing:
+            elapsed_time = time.time() - self.yaw_start_time
+            if elapsed_time >= self.yaw_duration:
+                # Force stop yawing
+                self.yaw_velocity = 0
+                self.yaw_start_time = None
+                self.yaw_target_angle = None
+                dprint("Completed yaw maneuver - STOPPED")
+                currently_yawing = False
+        
+        # Check if we should START yawing (only if not already in a yaw)
+        if not yaw_aligned and not currently_yawing:
+            # Start a new yaw maneuver
+            self.yaw_target_angle = yaw_angle
+            self.yaw_start_time = time.time()
+            
+            # Calculate duration needed to complete the yaw (minimum 0.5s to ensure it registers)
+            # Tello rotates at about 100 degrees/second at max speed
+            yaw_rate = 100 * (DRONE_SPEED / 100)  # Degrees per second at current speed
+            self.yaw_duration = max(abs(yaw_angle) / yaw_rate, 0.5)
+            
+            # Set yaw velocity
+            self.yaw_velocity = int(np.sign(yaw_angle) * DRONE_SPEED)
+            
+            # Reset forward movement when starting a new yaw
+            self.for_back_velocity = 0
+            self.forward_start_time = None
+            
+            dprint(f"Starting yaw: {yaw_angle:.1f}° for {self.yaw_duration:.2f}s")
+            currently_yawing = True
+        
+        # =================== ALTITUDE CONTROL ===================
+        # Check if we should STOP altitude adjustment
+        if currently_adjusting_altitude:
+            elapsed_time = time.time() - self.altitude_adjust_start
+            if elapsed_time >= self.altitude_duration:
+                # Force stop altitude adjustment
+                self.up_down_velocity = 0
+                self.altitude_adjust_start = None
+                dprint("Completed altitude adjustment - STOPPED")
+                currently_adjusting_altitude = False
+        
+        # Check if we should START altitude adjustment
+        pitch_threshold = 15  # degrees
+        if abs(pitch_angle) > pitch_threshold and not currently_adjusting_altitude and not currently_yawing:
+            # Set a fixed duration for the adjustment
+            self.altitude_duration = 0.5  # Half second
+            self.altitude_adjust_start = time.time()
+            
+            # Set a fixed velocity (20% of max speed)
+            altitude_speed = int(DRONE_SPEED * 0.2)
+            self.up_down_velocity = -int(np.sign(pitch_angle) * altitude_speed)
+            
+            dprint(f"Starting altitude adjustment: {pitch_angle:.1f}° for {self.altitude_duration:.2f}s")
+            currently_adjusting_altitude = True
+        
+        # ================ FORWARD MOVEMENT CONTROL ================
+        # Only consider moving forward if not yawing or adjusting altitude
+        can_move_forward = (closest_dist > 1.0 and 
+                            yaw_aligned and 
+                            not currently_yawing and 
+                            not currently_adjusting_altitude)
+        
+        # Check if we should STOP forward movement
+        if currently_moving_forward:
+            elapsed_time = time.time() - self.forward_start_time
+            if elapsed_time >= 3.0 or not can_move_forward:
+                # Force stop forward movement
+                self.for_back_velocity = 0
+                self.forward_start_time = None
+                dprint("Completed forward movement - STOPPED")
+                currently_moving_forward = False
+        
+        # Check if we should START forward movement
+        if can_move_forward and not currently_moving_forward:
+            self.forward_start_time = time.time()
+            self.for_back_velocity = DRONE_SPEED
+            dprint(f"Starting forward movement toward target at {furthest_dist:.2f}m")
+            currently_moving_forward = True
+        
+        # ================ SAFETY CHECK ================
+        # Make absolutely sure we're not sending commands after we should have stopped
+        if not currently_yawing:
+            self.yaw_velocity = 0
+        
+        if not currently_adjusting_altitude:
+            self.up_down_velocity = 0
+        
+        if not currently_moving_forward:
+            self.for_back_velocity = 0
+        
+        # Left-right velocity should always be zero in autonomous mode
+        self.left_right_velocity = 0
+        
+        # Debug current state
+        dprint(f"STATE: yaw={currently_yawing}, altitude={currently_adjusting_altitude}, forward={currently_moving_forward}")
+        dprint(f"VELOCITY: yaw={self.yaw_velocity}, up_down={self.up_down_velocity}, forward={self.for_back_velocity}")
+
     def _control_loop(self):
         last_update = time.time()
         update_interval = 1.0 / FPS
@@ -201,6 +509,10 @@ class Drone:
                 depth = prediction['depth']
             else:
                 depth = None
+            
+            # Run autonomous navigation if enabled
+            if self.autonomous_mode and depth is not None:
+                self._autonomous_navigation(depth)
             
             # Prepare and display the combined view
             display = self._prepare_display(frame, depth)
@@ -222,9 +534,15 @@ class Drone:
                     rprint("[yellow]Landing...[/yellow]")
                     self.tello.land()
                     self.send_rc_control = False
+                elif key == ord('m'):  # Toggle autonomous mode
+                    self.autonomous_mode = not self.autonomous_mode
+                    mode_str = "ON" if self.autonomous_mode else "OFF"
+                    rprint(f"[yellow]Autonomous mode: {mode_str}[/yellow]")
                 else:
-                    # Handle movement key press
-                    self._update_velocities(key, True)
+                    # Only update from keys if not in autonomous mode
+                    if not self.autonomous_mode:
+                        # Handle movement key press
+                        self._update_velocities(key, True)
             else:
                 # Check if any movement keys were released
                 for k in list(self.pressed_keys):

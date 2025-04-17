@@ -19,6 +19,7 @@ class AsyncPredictor:
         self.thread: Optional[threading.Thread] = None
         self.predictions_processed = 0
         self.last_prediction_time = time.time()
+        self.focal_length = None
 
     def start(self):
         self.running = True
@@ -41,6 +42,10 @@ class AsyncPredictor:
                     
                     # Process depth prediction
                     depth = prediction["depth"].cpu().numpy() * self.scale
+                    
+                    # Store focal length
+                    if "focallength_px" in prediction:
+                        self.focal_length = prediction["focallength_px"].item()
                     
                     # Update metrics
                     current_time = time.time()
@@ -77,3 +82,7 @@ class AsyncPredictor:
             return self.output_queue.get_nowait()
         except:
             return None
+            
+    def get_focal_length(self) -> Optional[float]:
+        """Get the last computed focal length"""
+        return self.focal_length
