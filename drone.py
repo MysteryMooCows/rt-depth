@@ -36,7 +36,7 @@ class Drone:
         self.left_right_velocity = 0
         self.up_down_velocity = 0
         self.yaw_velocity = 0
-        self.speed = 10
+        self.speed = int(os.getenv('DRONE_SPEED', 40))  # Default speed if not set
 
         # Track pressed keys
         self.pressed_keys = set()
@@ -442,9 +442,8 @@ class Drone:
             self.altitude_duration = 0.5  # Half second
             self.altitude_adjust_start = time.time()
             
-            # Set a fixed velocity (20% of max speed)
-            altitude_speed = int(DRONE_SPEED * 0.2)
-            self.up_down_velocity = -int(np.sign(pitch_angle) * altitude_speed)
+            # Set velocity consistent with other movements
+            self.up_down_velocity = -int(np.sign(pitch_angle) * DRONE_SPEED)
             
             dprint(f"Starting altitude adjustment: {pitch_angle:.1f}° for {self.altitude_duration:.2f}s")
             currently_adjusting_altitude = True
