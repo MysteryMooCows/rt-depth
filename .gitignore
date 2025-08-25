@@ -6,7 +6,7 @@ __pycache__/
 
 # depth_pro module
 src/
-depth_pro/__pycache__/
+depth_pro/
 checkpoints/
 
 # data
@@ -17,3 +17,4 @@ output/
 # environment
 .env
 
+src/depth-pro
